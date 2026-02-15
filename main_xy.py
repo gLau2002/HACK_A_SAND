@@ -103,14 +103,6 @@ def main():
     sand_grid = None  # created on first frame when we have h, w
     white_background = False
 
-    # -----------------------------
-    # Hand sign bool variables
-    sand_pinch = False
-    water_pinch = False
-    one_pinch = False
-    two_pinch = False
-    
-
     while True:
         ok, frame = cap.read()
         if not ok:
