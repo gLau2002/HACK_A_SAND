@@ -419,9 +419,20 @@ def main():
 
         for i in range(SAND_SUBSTEPS):
             sand_grid = step(sand_grid, run_absorption=(i == SAND_SUBSTEPS - 1))
+
+        # --- Corner drains: delete particles only in bottom corners ---
         rows, cols = sand_grid.shape
+        drain_w = 1  # width in CELLS (try 1–4)
+        drain_h = 1  # height in CELLS (try 1–4)
+        r0 = rows - drain_h
+
+        sand_grid[r0:rows, 0:drain_w] = EMPTY                 # bottom-left corner
+        sand_grid[r0:rows, cols - drain_w:cols] = EMPTY       # bottom-right corner
+
+        # Now render the sand overlay as usual
         color_grid = COLORS_BGR[sand_grid]
         scaled = cv2.resize(color_grid, (cols * CELL, rows * CELL), interpolation=cv2.INTER_NEAREST)
+
         rh, rw = min(rows * CELL, h), min(cols * CELL, w)
         region = frame[:rh, :rw]
         non_empty = (scaled[:rh, :rw, 0] != 0) | (scaled[:rh, :rw, 1] != 0) | (scaled[:rh, :rw, 2] != 0)
