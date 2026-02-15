@@ -1,11 +1,10 @@
 """
-Sand physics simulation — top-down view in a Pygame window.
-Click or drag to place sand; Space = wet/dry sand, P = pause, C = clear.
-Window constantly vibrates; sand levels out over time.
+Sand physics simulation — top-down view using matplotlib.
+Click or drag to place sand; Space = pause, C = clear.
 """
-import random
-import pygame
-import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
+from matplotlib.animation import FuncAnimation
 
 from simulation import create_grid, step, place_sand, clear_grid, SAND, EMPTY
 
@@ -16,92 +15,94 @@ CELL_SIZE = 4
 GRID_COLS = WINDOW_WIDTH // CELL_SIZE
 GRID_ROWS = WINDOW_HEIGHT // CELL_SIZE
 
-# Colors (top-down view)
-BACKGROUND = (30, 30, 35)
-SAND_COLOR = (194, 178, 128)
+# Colors (top-down view) — RGB 0–255, normalized for matplotlib
+BACKGROUND = (30 / 255, 30 / 255, 35 / 255)
+SAND_COLOR = (194 / 255, 178 / 255, 128 / 255)
 
 # Simulation
 FPS = 60
 STEPS_PER_FRAME = 2
 BRUSH_RADIUS = 2
-SHAKE_RANGE = 4
 
 
-def pixel_to_grid(px: int, py: int) -> tuple[int, int]:
-    """Convert pixel coordinates to grid (row, col)."""
-    col = px // CELL_SIZE
-    row = py // CELL_SIZE
-    return row, col
-
-
-def render(screen: pygame.Surface, offscreen: pygame.Surface, grid: np.ndarray) -> None:
-    """Draw the grid onto offscreen surface (centered with padding for shake), then blit with random shake offset to screen."""
-    offscreen.fill(BACKGROUND)
-    for r in range(grid.shape[0]):
-        for c in range(grid.shape[1]):
-            if grid[r, c] == SAND:
-                rect = pygame.Rect(
-                    SHAKE_RANGE + c * CELL_SIZE,
-                    SHAKE_RANGE + r * CELL_SIZE,
-                    CELL_SIZE,
-                    CELL_SIZE,
-                )
-                pygame.draw.rect(offscreen, SAND_COLOR, rect)
-
-    dx = random.randint(-SHAKE_RANGE, SHAKE_RANGE)
-    dy = random.randint(-SHAKE_RANGE, SHAKE_RANGE)
-    src_rect = pygame.Rect(SHAKE_RANGE + dx, SHAKE_RANGE + dy, WINDOW_WIDTH, WINDOW_HEIGHT)
-    screen.blit(offscreen, (0, 0), src_rect)
-    pygame.display.flip()
+def data_to_grid(ax, xdata: float, ydata: float) -> tuple[int, int] | None:
+    """Convert axes data coordinates to grid (row, col). Returns None if out of bounds."""
+    if xdata is None or ydata is None:
+        return None
+    col = int(xdata)
+    row = int(ydata)
+    if 0 <= row < GRID_ROWS and 0 <= col < GRID_COLS:
+        return row, col
+    return None
 
 
 def main() -> None:
-    pygame.init()
-    screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
-    pygame.display.set_caption("Sand Physics — Top-Down")
-    clock = pygame.time.Clock()
-    offscreen = pygame.Surface((WINDOW_WIDTH + 2 * SHAKE_RANGE, WINDOW_HEIGHT + 2 * SHAKE_RANGE))
+    cmap = mcolors.ListedColormap([BACKGROUND, SAND_COLOR])
+    norm = mcolors.Normalize(vmin=0, vmax=1)
+
+    fig, ax = plt.subplots(figsize=(WINDOW_WIDTH / 100, WINDOW_HEIGHT / 100), dpi=100)
+    fig.canvas.manager.set_window_title("Sand Physics — Top-Down")
 
     grid = create_grid(GRID_ROWS, GRID_COLS)
-    paused = False
-    sand_is_wet = False
-    mouse_down = False
+    state = type("State", (), {"grid": grid, "paused": False, "mouse_down": False})()
 
-    running = True
-    while running:
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                running = False
-            elif event.type == pygame.MOUSEBUTTONDOWN:
-                if event.button == 1:
-                    mouse_down = True
-                    row, col = pixel_to_grid(*event.pos)
-                    place_sand(grid, row, col, BRUSH_RADIUS)
-            elif event.type == pygame.MOUSEBUTTONUP:
-                if event.button == 1:
-                    mouse_down = False
-            elif event.type == pygame.MOUSEMOTION:
-                if mouse_down:
-                    row, col = pixel_to_grid(*event.pos)
-                    place_sand(grid, row, col, BRUSH_RADIUS)
-            elif event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_SPACE:
-                    sand_is_wet = not sand_is_wet
-                elif event.key == pygame.K_p:
-                    paused = not paused
-                elif event.key == pygame.K_c:
-                    clear_grid(grid)
+    im = ax.imshow(
+        grid,
+        cmap=cmap,
+        norm=norm,
+        extent=[0, GRID_COLS, GRID_ROWS, 0],
+        aspect="equal",
+        interpolation="nearest",
+        origin="upper",
+    )
+    ax.set_xlim(0, GRID_COLS)
+    ax.set_ylim(GRID_ROWS, 0)
+    ax.set_axis_off()
 
-        if not paused:
+    def on_press(event):
+        if event.inaxes != ax or event.button != 1:
+            return
+        state.mouse_down = True
+        cell = data_to_grid(ax, event.xdata, event.ydata)
+        if cell:
+            row, col = cell
+            place_sand(state.grid, row, col, BRUSH_RADIUS)
+
+    def on_motion(event):
+        if event.inaxes != ax or not state.mouse_down:
+            return
+        cell = data_to_grid(ax, event.xdata, event.ydata)
+        if cell:
+            row, col = cell
+            place_sand(state.grid, row, col, BRUSH_RADIUS)
+
+    def on_release(event):
+        if event.button == 1:
+            state.mouse_down = False
+
+    def on_key(event):
+        if event.key == " ":
+            state.paused = not state.paused
+        elif event.key == "c":
+            clear_grid(state.grid)
+
+    def animate(_frame):
+        if not state.paused:
             for _ in range(STEPS_PER_FRAME):
-                grid = step(grid, wet=sand_is_wet)
+                state.grid = step(state.grid)
+        im.set_data(state.grid)
+        return [im]
 
-        mode = "Wet" if sand_is_wet else "Dry"
-        pygame.display.set_caption(f"Sand Physics — {mode}")
-        render(screen, offscreen, grid)
-        clock.tick(FPS)
+    fig.canvas.mpl_connect("button_press_event", on_press)
+    fig.canvas.mpl_connect("motion_notify_event", on_motion)
+    fig.canvas.mpl_connect("button_release_event", on_release)
+    fig.canvas.mpl_connect("key_press_event", on_key)
 
-    pygame.quit()
+    _anim = FuncAnimation(
+        fig, animate, interval=1000 // FPS, blit=False, cache_frame_data=False
+    )
+    plt.tight_layout(pad=0)
+    plt.show()
 
 
 if __name__ == "__main__":

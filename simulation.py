@@ -23,10 +23,10 @@ def _is_supported(grid: np.ndarray, r: int, nc: int) -> bool:
     return grid[r + 1, nc] != EMPTY
 
 
-def step(grid: np.ndarray, wet: bool = False) -> np.ndarray:
+def step(grid: np.ndarray) -> np.ndarray:
     """
-    Advance the simulation one step. Sand falls down; if blocked (dry only), tries down-left or down-right.
-    Dry: then horizontal settling. Wet: straight down only, no diagonal or horizontal move.
+    Advance the simulation one step. Sand falls down; if blocked, tries down-left or down-right.
+    Then horizontal settling: sand moves sideways into supported empty cells (vibration-induced leveling).
     Returns a new grid (double-buffer).
     """
     rows, cols = grid.shape
@@ -44,9 +44,6 @@ def step(grid: np.ndarray, wet: bool = False) -> np.ndarray:
                 next_grid[r, c] = EMPTY
                 next_grid[dr, c] = SAND
                 continue
-            # Dry only: try diagonal (down-left / down-right). Wet: grain stays.
-            if wet:
-                continue
             candidates = [(dr, c - 1), (dr, c + 1)]
             random.shuffle(candidates)
             for nr, nc in candidates:
@@ -56,28 +53,25 @@ def step(grid: np.ndarray, wet: bool = False) -> np.ndarray:
                     next_grid[r, c] = EMPTY
                     next_grid[nr, nc] = SAND
                     break
+    return next_grid
+    # Pass 2: horizontal settling — sand moves sideways into supported empty cells
+    # settled_grid = next_grid.copy()
+    # sand_cells = [(r, c) for r in range(rows) for c in range(cols) if next_grid[r, c] == SAND]
+    # random.shuffle(sand_cells)
+    # for r, c in sand_cells:
+    #     if settled_grid[r, c] != SAND:
+    #         continue
+    #     candidates = [(r, c - 1), (r, c + 1)]
+    #     random.shuffle(candidates)
+    #     for _, nc in candidates:
+    #         if nc < 0 or nc >= cols:
+    #             continue
+    #         if next_grid[r, nc] == EMPTY and settled_grid[r, nc] == EMPTY and _is_supported(next_grid, r, nc):
+    #             settled_grid[r, c] = EMPTY
+    #             settled_grid[r, nc] = SAND
+    #             break
 
-    if wet:
-        return next_grid
-
-    # Pass 2: horizontal settling — sand moves sideways into supported empty cells (dry only)
-    settled_grid = next_grid.copy()
-    sand_cells = [(r, c) for r in range(rows) for c in range(cols) if next_grid[r, c] == SAND]
-    random.shuffle(sand_cells)
-    for r, c in sand_cells:
-        if settled_grid[r, c] != SAND:
-            continue
-        candidates = [(r, c - 1), (r, c + 1)]
-        random.shuffle(candidates)
-        for _, nc in candidates:
-            if nc < 0 or nc >= cols:
-                continue
-            if next_grid[r, nc] == EMPTY and settled_grid[r, nc] == EMPTY and _is_supported(next_grid, r, nc):
-                settled_grid[r, c] = EMPTY
-                settled_grid[r, nc] = SAND
-                break
-
-    return settled_grid
+    # return settled_grid
 
 
 def place_sand(grid: np.ndarray, row: int, col: int, radius: int = 0) -> None:
