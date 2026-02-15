@@ -192,7 +192,7 @@ def main():
                     prev_fist = {"Left": False, "Right": False, "Hand": False}
 
                 if is_fist and not prev_fist.get(label, False):
-                    print(f"{label} fist detected!")
+                    print(f"{label} fist detected!") #ERASER HERE
 
                 prev_fist[label] = is_fist
                 
@@ -237,21 +237,15 @@ def main():
                             place_sand(sand_grid, grow, gcol, radius=0)
 
                     elif gesture == "water":
-                        print("Water pinch detected!")
+                        grow, gcol = y_cv // CELL, x_cv // CELL
+                        for _ in range(3):
+                                place_water(sand_grid, grow, gcol, radius=PLACE_RADIUS)
 
                     elif gesture == "one":
                         print("One pinch detected!")
 
                     elif gesture == "two":
                         print("Two pinch detected!")
-                # Spawn pixelated sand or water at fingertip when pinch < 35
-                if pinch_px < PINCH_THRESHOLD:
-                    grow, gcol = y_cv // CELL, x_cv // CELL
-                    for _ in range(3):
-                        if drop_mode == "sand":
-                            place_sand(sand_grid, grow, gcol, radius=PLACE_RADIUS)
-                        else:
-                            place_water(sand_grid, grow, gcol, radius=PLACE_RADIUS)
 
                 # Text near fingertip (shows bottom-left coords)
                 cv2.putText(
