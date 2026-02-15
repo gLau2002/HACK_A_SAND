@@ -62,6 +62,8 @@ PLACE_RADIUS = 2
 GRAB_RADIUS = 5
 DISASTER_DURATION_FRAMES = 60
 WAVE_INTERVAL = 10
+DISASTER_MIN_TIME_BETWEEN = 30
+DISASTER_MAX_TIME_BETWEEN = 45
 
 # -----------------------------
 # Helpers
@@ -89,6 +91,17 @@ def to_bottom_left_coords(norm_x: float, norm_y: float, w: int, h: int):
     y_top = int(norm_y * h)
     y_bottom = (h - 1) - y_top
     return x_px, y_bottom
+
+
+def start_disaster(disaster: dict, disaster_type: str, cols: int, rows: int) -> None:
+    """Start a disaster now: set type, frames_left, and type-specific params (center_col, tsunami_side)."""
+    disaster["type"] = disaster_type
+    disaster["frames_left"] = DISASTER_DURATION_FRAMES
+    if disaster_type == "tornado":
+        disaster["center_col"] = random.randint(cols // 5, cols * 4 // 5) if cols > 0 else cols // 2
+    elif disaster_type == "tsunami":
+        disaster["tsunami_side"] = random.choice(["left", "right"])
+
 
 def main():
     # -----------------------------
@@ -127,8 +140,11 @@ def main():
 
     sand_grid = None  # created on first frame when we have h, w
     white_background = False
+    show_hand_wireframe = True
     drop_mode = "sand"
     disaster = {"type": None, "frames_left": 0, "center_col": 0}
+    disaster_queue = []  # list of {"scheduled_at": float, "type": "tornado"|"earthquake"|"tsunami"}
+    next_auto_disaster_time = time.time() + random.uniform(DISASTER_MIN_TIME_BETWEEN, DISASTER_MAX_TIME_BETWEEN)
     grabbed_blob = None  # {"cells": [(dr, dc, cell_type), ...]} when dragging
     last_drag_center = (0, 0)  # grid coords for place on release
     prev_gesture = None  # to detect grab transition for re-pinch replace
@@ -171,21 +187,23 @@ def main():
                 # Convert normalized -> pixel coords (OpenCV top-left origin)
                 pts = [(lm.x * w, lm.y * h) for lm in hand_lms]
 
-                # Draw skeleton
-                for a, b in HAND_CONNECTIONS:
-                    draw_line(frame, pts[a], pts[b], color=(0, 255, 0), t=2)
-                for p in pts:
-                    draw_point(frame, p, color=(0, 255, 0), r=3)
+                if show_hand_wireframe:
+                    # Draw skeleton
+                    for a, b in HAND_CONNECTIONS:
+                        draw_line(frame, pts[a], pts[b], color=(0, 255, 0), t=2)
+                    for p in pts:
+                        draw_point(frame, p, color=(0, 255, 0), r=3)
 
                 # Index fingertip coordinates with bottom-left origin
                 tip = hand_lms[INDEX_TIP]  # normalized coords
                 x_bl, y_bl = to_bottom_left_coords(tip.x, tip.y, w, h)
                 idx_coords[label] = (x_bl, y_bl)
-
-                # Draw a bigger dot on the index fingertip
                 x_cv = int(tip.x * w)
                 y_cv = int(tip.y * h)
-                cv2.circle(frame, (x_cv, y_cv), 8, (0, 255, 0), -1)
+
+                if show_hand_wireframe:
+                    # Draw a bigger dot on the index fingertip
+                    cv2.circle(frame, (x_cv, y_cv), 8, (0, 255, 0), -1)
                 
                 
                 # fist detection:
@@ -277,16 +295,17 @@ def main():
                 else:
                     pass
 
-                # Text near fingertip (shows bottom-left coords)
-                cv2.putText(
-                    frame,
-                    f"{label} idx: ({x_bl}, {y_bl})  pinch:{pinch_px:0.1f}px",
-                    (x_cv + 10, y_cv - 10),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.6,
-                    (0, 255, 0),
-                    2
-                )
+                if show_hand_wireframe:
+                    # Text near fingertip (shows bottom-left coords)
+                    cv2.putText(
+                        frame,
+                        f"{label} idx: ({x_bl}, {y_bl})  pinch:{pinch_px:0.1f}px",
+                        (x_cv + 10, y_cv - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.6,
+                        (0, 255, 0),
+                        2
+                    )
                 prev_gesture = gesture
                 if is_fist:
                     current_mode = "erase"
@@ -304,6 +323,21 @@ def main():
             if grabbed_blob is not None:
                 place_blob(sand_grid, grabbed_blob, last_drag_center[0], last_drag_center[1])
                 grabbed_blob = None
+
+        # Auto-disaster: every 10-60s queue one random disaster (5s from now)
+        if sand_grid is not None and time.time() >= next_auto_disaster_time:
+            disaster_queue.append({
+                "scheduled_at": time.time() + 5,
+                "type": random.choice(["tornado", "earthquake", "tsunami"]),
+            })
+            next_auto_disaster_time = time.time() + random.uniform(DISASTER_MIN_TIME_BETWEEN, DISASTER_MAX_TIME_BETWEEN)
+
+        # Process queue: start any disasters whose scheduled time has passed
+        while disaster_queue and time.time() >= disaster_queue[0]["scheduled_at"]:
+            entry = disaster_queue.pop(0)
+            if sand_grid is not None:
+                rows_g, cols_g = sand_grid.shape
+                start_disaster(disaster, entry["type"], cols_g, rows_g)
 
         # Apply disaster effect (if active) then advance sand physics
         if disaster["frames_left"] > 0:
@@ -378,12 +412,27 @@ def main():
         # Example: Left=(123,456) Right=(800,300)
         #print(f"Left={idx_coords['Left']}  Right={idx_coords['Right']}")
 
+        # Warning: show "Warning: {Disaster} Incoming" at top-center in yellow when next disaster is within 5s
+        now = time.time()
+        if disaster_queue and disaster_queue[0]["scheduled_at"] - 5 <= now < disaster_queue[0]["scheduled_at"]:
+            name = disaster_queue[0]["type"].capitalize()
+            warning_text = f"Warning: {name} Incoming"
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            font_scale = 0.9
+            thickness = 2
+            (tw, th), _ = cv2.getTextSize(warning_text, font, font_scale, thickness)
+            x = (w - tw) // 2
+            y = 28
+            cv2.putText(frame, warning_text, (x, y), font, font_scale, (0, 255, 255), thickness)
+
         help_color = (0, 0, 0) if white_background else (255, 255, 255)
         cv2.putText(frame, "Index fingertip (x,y). Bottom-left is (0,0). Press Q to quit",
                     (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.6, help_color, 2)
-        cv2.putText(frame, "Space: toggle beach background",
-                    (20, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, help_color, 2)
-        cv2.putText(frame, "1: Tornado  2: Earthquake  3: Tsunami",
+        # cv2.putText(frame, "Space: toggle beach background",
+        #             (20, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, help_color, 2)
+        # cv2.putText(frame, "H: toggle hand wireframe",
+        #             (20, 85), cv2.FONT_HERSHEY_SIMPLEX, 0.6, help_color, 2)
+        cv2.putText(frame, "1/2/3: Queue Tornado / Earthquake / Tsunami (5s warning)",
                     (20, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.6, help_color, 2)
 
         # Screen shake for tornado and earthquake
@@ -399,19 +448,16 @@ def main():
         key = cv2.waitKey(1) & 0xFF
         if key == ord(" "):
             white_background = not white_background
+        if key in (ord("h"), ord("H")):
+            show_hand_wireframe = not show_hand_wireframe
         if key == 9:  # Tab
             drop_mode = "water" if drop_mode == "sand" else "sand"
         if key == ord("1"):
-            disaster["type"] = "tornado"
-            disaster["frames_left"] = DISASTER_DURATION_FRAMES
-            disaster["center_col"] = random.randint(cols // 5, cols * 4 // 5) if sand_grid is not None else cols // 2
+            disaster_queue.append({"scheduled_at": time.time() + 5, "type": "tornado"})
         if key == ord("2"):
-            disaster["type"] = "earthquake"
-            disaster["frames_left"] = DISASTER_DURATION_FRAMES
+            disaster_queue.append({"scheduled_at": time.time() + 5, "type": "earthquake"})
         if key == ord("3"):
-            disaster["type"] = "tsunami"
-            disaster["frames_left"] = DISASTER_DURATION_FRAMES
-            disaster["tsunami_side"] = random.choice(["left", "right"])
+            disaster_queue.append({"scheduled_at": time.time() + 5, "type": "tsunami"})
         if key in (ord("q"), ord("Q")):
             break
 
