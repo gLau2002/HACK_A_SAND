@@ -5,12 +5,18 @@ import cv2
 import numpy as np
 import mediapipe as mp
 
-from simulation import create_grid, step, place_sand, SAND, EMPTY
+from simulation import create_grid, step, place_sand, place_water, SAND, WATER, WET_SAND, EMPTY
 
 # Sand overlay: cell size in pixels (pixelated look), BGR color
 CELL = 4
-SAND_COLOR_BGR = (74, 117, 180)  # tan/beige
+WET_SAND_COLOR_BGR = (34, 89, 122)  # tan/beige
+DRY_SAND_COLOR_BGR = (80, 187, 229)  # lighter tan
+WATER_COLOR_BGR = (246, 118, 86)
+# Lookup for vectorized draw: index = cell type (EMPTY=0, SAND=1, WATER=2, WET_SAND=3)
+COLORS_BGR = np.array([(0, 0, 0), DRY_SAND_COLOR_BGR, WATER_COLOR_BGR, WET_SAND_COLOR_BGR], dtype=np.uint8)
 PINCH_THRESHOLD = 35
+SAND_SUBSTEPS = 3
+PLACE_RADIUS = 2
 
 # -----------------------------
 # Helpers
@@ -99,6 +105,7 @@ def main():
 
     sand_grid = None  # created on first frame when we have h, w
     white_background = False
+    drop_mode = "sand"
 
     while True:
         ok, frame = cap.read()
@@ -154,11 +161,14 @@ def main():
                 # Optional: pinch distance (thumb tip to index tip) in pixels
                 pinch_px = dist(np.array(pts[THUMB_TIP]), np.array(pts[INDEX_TIP]))
 
-                # Spawn pixelated sand at fingertip when pinch < 35
+                # Spawn pixelated sand or water at fingertip when pinch < 35
                 if pinch_px < PINCH_THRESHOLD:
                     grow, gcol = y_cv // CELL, x_cv // CELL
                     for _ in range(3):
-                        place_sand(sand_grid, grow, gcol, radius=0)
+                        if drop_mode == "sand":
+                            place_sand(sand_grid, grow, gcol, radius=PLACE_RADIUS)
+                        else:
+                            place_water(sand_grid, grow, gcol, radius=PLACE_RADIUS)
 
                 # Text near fingertip (shows bottom-left coords)
                 cv2.putText(
@@ -171,16 +181,16 @@ def main():
                     2
                 )
 
-        # Advance sand physics and draw pixelated sand on frame
-        sand_grid = step(sand_grid)
+        # Advance sand physics and draw pixelated sand on frame (absorption only on last substep)
+        for i in range(SAND_SUBSTEPS):
+            sand_grid = step(sand_grid, run_absorption=(i == SAND_SUBSTEPS - 1))
         rows, cols = sand_grid.shape
-        for r in range(rows):
-            for c in range(cols):
-                if sand_grid[r, c] == SAND:
-                    y1, y2 = r * CELL, (r + 1) * CELL
-                    x1, x2 = c * CELL, (c + 1) * CELL
-                    if y2 <= h and x2 <= w:
-                        frame[y1:y2, x1:x2] = SAND_COLOR_BGR
+        color_grid = COLORS_BGR[sand_grid]
+        scaled = cv2.resize(color_grid, (cols * CELL, rows * CELL), interpolation=cv2.INTER_NEAREST)
+        rh, rw = min(rows * CELL, h), min(cols * CELL, w)
+        region = frame[:rh, :rw]
+        non_empty = (scaled[:rh, :rw, 0] != 0) | (scaled[:rh, :rw, 1] != 0) | (scaled[:rh, :rw, 2] != 0)
+        region[non_empty] = scaled[:rh, :rw][non_empty]
 
         # Print to terminal every frame (useful for your game code / debugging)
         # Example: Left=(123,456) Right=(800,300)
@@ -191,11 +201,15 @@ def main():
                     (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.6, help_color, 2)
         cv2.putText(frame, "Space: toggle beach background",
                     (20, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, help_color, 2)
+        cv2.putText(frame, "Tab: toggle sand/water",
+                    (20, 85), cv2.FONT_HERSHEY_SIMPLEX, 0.6, help_color, 2)
 
         cv2.imshow("MediaPipe Hands - Index (bottom-left coords)", frame)
         key = cv2.waitKey(1) & 0xFF
         if key == ord(" "):
             white_background = not white_background
+        if key == 9:  # Tab
+            drop_mode = "water" if drop_mode == "sand" else "sand"
         if key in (ord("q"), ord("Q")):
             break
 
