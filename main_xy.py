@@ -5,6 +5,13 @@ import cv2
 import numpy as np
 import mediapipe as mp
 
+from simulation import create_grid, step, place_sand, SAND, EMPTY
+
+# Sand overlay: cell size in pixels (pixelated look), BGR color
+CELL = 4
+SAND_COLOR_BGR = (74, 117, 180)  # tan/beige
+PINCH_THRESHOLD = 35
+
 # -----------------------------
 # Helpers
 # -----------------------------
@@ -85,6 +92,8 @@ def main():
     )
     landmarker = vision.HandLandmarker.create_from_options(options)
 
+    sand_grid = None  # created on first frame when we have h, w
+
     while True:
         ok, frame = cap.read()
         if not ok:
@@ -93,6 +102,9 @@ def main():
         # Mirror so it feels like "selfie view"
         frame = cv2.flip(frame, 1)
         h, w = frame.shape[:2]
+
+        if sand_grid is None:
+            sand_grid = create_grid(h // CELL, w // CELL)
 
         # MediaPipe expects RGB
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -133,6 +145,12 @@ def main():
                 # Optional: pinch distance (thumb tip to index tip) in pixels
                 pinch_px = dist(np.array(pts[THUMB_TIP]), np.array(pts[INDEX_TIP]))
 
+                # Spawn pixelated sand at fingertip when pinch < 35
+                if pinch_px < PINCH_THRESHOLD:
+                    grow, gcol = y_cv // CELL, x_cv // CELL
+                    for _ in range(3):
+                        place_sand(sand_grid, grow, gcol, radius=0)
+
                 # Text near fingertip (shows bottom-left coords)
                 cv2.putText(
                     frame,
@@ -143,6 +161,17 @@ def main():
                     (0, 255, 0),
                     2
                 )
+
+        # Advance sand physics and draw pixelated sand on frame
+        sand_grid = step(sand_grid)
+        rows, cols = sand_grid.shape
+        for r in range(rows):
+            for c in range(cols):
+                if sand_grid[r, c] == SAND:
+                    y1, y2 = r * CELL, (r + 1) * CELL
+                    x1, x2 = c * CELL, (c + 1) * CELL
+                    if y2 <= h and x2 <= w:
+                        frame[y1:y2, x1:x2] = SAND_COLOR_BGR
 
         # Print to terminal every frame (useful for your game code / debugging)
         # Example: Left=(123,456) Right=(800,300)
