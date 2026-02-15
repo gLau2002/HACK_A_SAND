@@ -92,7 +92,13 @@ def main():
     )
     landmarker = vision.HandLandmarker.create_from_options(options)
 
+    beach_bg_path = Path(__file__).parent / "assets" / "BeachBG.png"
+    beach_bg_img = cv2.imread(str(beach_bg_path))
+    if beach_bg_img is None:
+        raise FileNotFoundError(f"Could not load background image: {beach_bg_path}")
+
     sand_grid = None  # created on first frame when we have h, w
+    white_background = False
 
     while True:
         ok, frame = cap.read()
@@ -112,6 +118,9 @@ def main():
 
         t_ms = int(time.time() * 1000)
         result = landmarker.detect_for_video(mp_image, t_ms)
+
+        if white_background:
+            frame = cv2.resize(beach_bg_img, (w, h), interpolation=cv2.INTER_NEAREST).copy()
 
         # We'll store index fingertip coords for each hand (bottom-left origin)
         idx_coords = {"Left": None, "Right": None}
@@ -177,11 +186,17 @@ def main():
         # Example: Left=(123,456) Right=(800,300)
         print(f"Left={idx_coords['Left']}  Right={idx_coords['Right']}")
 
+        help_color = (0, 0, 0) if white_background else (255, 255, 255)
         cv2.putText(frame, "Index fingertip (x,y). Bottom-left is (0,0). Press Q to quit",
-                    (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+                    (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.6, help_color, 2)
+        cv2.putText(frame, "Space: toggle beach background",
+                    (20, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, help_color, 2)
 
         cv2.imshow("MediaPipe Hands - Index (bottom-left coords)", frame)
-        if (cv2.waitKey(1) & 0xFF) in (ord("q"), ord("Q")):
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord(" "):
+            white_background = not white_background
+        if key in (ord("q"), ord("Q")):
             break
 
     cap.release()
