@@ -2,8 +2,10 @@
 Grid-based sand physics simulation.
 Uses double-buffering: read from current grid, write to next grid, then swap.
 """
-import numpy as np
+import math
 import random
+
+import numpy as np
 
 # Cell types
 EMPTY = 0
@@ -267,3 +269,71 @@ def place_water(grid: np.ndarray, row: int, col: int, radius: int = 0) -> None:
 def clear_grid(grid: np.ndarray) -> None:
     """Set all cells to empty. Modifies grid in place."""
     grid.fill(EMPTY)
+
+
+def apply_tornado(grid: np.ndarray, center_col: int, radius: int = 8, intensity: float = 0.4) -> None:
+    """
+    Vortex displacement: non-EMPTY cells in a circular region get rotated around
+    the center (horizontal fling) and lifted upward. Modifies grid in place.
+    """
+    rows, cols = grid.shape
+    center_row = rows - 1
+    r2 = radius * radius
+    moves = []
+    for dr in range(-radius, radius + 1):
+        for dc in range(-radius, radius + 1):
+            if dr * dr + dc * dc > r2:
+                continue
+            r, c = center_row + dr, center_col + dc
+            if 0 <= r < rows and 0 <= c < cols and grid[r, c] != EMPTY:
+                dist_from_center = math.sqrt(dr * dr + dc * dc)
+                if dist_from_center < 0.5:
+                    continue
+                angle = math.atan2(dc, -dr)
+                new_angle = angle + intensity * math.pi
+                lift = int(dist_from_center * intensity * 2)
+                fling = 1.5
+                new_dr = -dist_from_center * math.cos(new_angle) * fling
+                new_dc = dist_from_center * math.sin(new_angle) * fling
+                nr = max(0, min(rows - 1, int(center_row + new_dr - lift)))
+                nc = max(0, min(cols - 1, int(center_col + new_dc)))
+                moves.append((r, c, nr, nc, int(grid[r, c])))
+    for r, c, _, _, _ in moves:
+        grid[r, c] = EMPTY
+    for _, _, nr, nc, cell in moves:
+        grid[nr, nc] = cell
+
+
+def apply_earthquake(grid: np.ndarray, intensity: float = 0.15) -> None:
+    """
+    Local chaotic shuffling: non-EMPTY cells swap with a random 4-neighbor with probability p.
+    Modifies grid in place.
+    """
+    rows, cols = grid.shape
+    non_empty = [(r, c) for r in range(rows) for c in range(cols) if grid[r, c] != EMPTY]
+    random.shuffle(non_empty)
+    for r, c in non_empty:
+        if random.random() >= intensity:
+            continue
+        candidates = [(r - 1, c), (r + 1, c), (r, c - 1), (r, c + 1)]
+        candidates = [(nr, nc) for nr, nc in candidates if 0 <= nr < rows and 0 <= nc < cols]
+        if not candidates:
+            continue
+        nr, nc = random.choice(candidates)
+        grid[r, c], grid[nr, nc] = grid[nr, nc], grid[r, c]
+
+
+def apply_tsunami(grid: np.ndarray, wave_height: int = 8) -> None:
+    """
+    Spawn WATER in a wave-shaped band from the bottom edge. Wave is taller in middle, thinner at edges.
+    Modifies grid in place.
+    """
+    rows, cols = grid.shape
+    for c in range(cols):
+        t = (c - cols / 2) / (cols / 2) if cols > 0 else 0
+        profile = max(0, 1 - t * t)
+        depth = max(1, int(wave_height * profile))
+        for i in range(depth):
+            r = rows - 1 - i
+            if r >= 0 and grid[r, c] == EMPTY:
+                grid[r, c] = WATER

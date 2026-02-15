@@ -1,3 +1,4 @@
+import random
 import time
 from pathlib import Path
 
@@ -5,7 +6,19 @@ import cv2
 import numpy as np
 import mediapipe as mp
 
-from simulation import create_grid, step, place_sand, place_water, SAND, WATER, WET_SAND, EMPTY
+from simulation import (
+    create_grid,
+    step,
+    place_sand,
+    place_water,
+    apply_tornado,
+    apply_earthquake,
+    apply_tsunami,
+    SAND,
+    WATER,
+    WET_SAND,
+    EMPTY,
+)
 
 # Sand overlay: cell size in pixels (pixelated look), BGR color
 CELL = 4
@@ -17,6 +30,7 @@ COLORS_BGR = np.array([(0, 0, 0), DRY_SAND_COLOR_BGR, WATER_COLOR_BGR, WET_SAND_
 PINCH_THRESHOLD = 35
 SAND_SUBSTEPS = 3
 PLACE_RADIUS = 2
+DISASTER_DURATION_FRAMES = 60
 
 # -----------------------------
 # Helpers
@@ -106,6 +120,7 @@ def main():
     sand_grid = None  # created on first frame when we have h, w
     white_background = False
     drop_mode = "sand"
+    disaster = {"type": None, "frames_left": 0, "center_col": 0}
 
     while True:
         ok, frame = cap.read()
@@ -181,7 +196,25 @@ def main():
                     2
                 )
 
-        # Advance sand physics and draw pixelated sand on frame (absorption only on last substep)
+        # Apply disaster effect (if active) then advance sand physics
+        if disaster["frames_left"] > 0:
+            if disaster["type"] == "tornado":
+                rows_g, cols_g = sand_grid.shape
+                radius_base, intensity_base = 8, 5
+                radius = max(4, radius_base + random.randint(-2, 2))
+                intensity = intensity_base * (0.7 + 0.6 * random.random())
+                disaster["center_col"] += random.randint(-2, 2)
+                disaster["center_col"] = max(
+                    radius, min(cols_g - 1 - radius, disaster["center_col"])
+                )
+                disaster["radius"] = radius
+                apply_tornado(sand_grid, disaster["center_col"], radius=radius, intensity=intensity)
+            elif disaster["type"] == "earthquake":
+                apply_earthquake(sand_grid, intensity=0.15)
+            elif disaster["type"] == "tsunami":
+                apply_tsunami(sand_grid, wave_height=28)
+            disaster["frames_left"] -= 1
+
         for i in range(SAND_SUBSTEPS):
             sand_grid = step(sand_grid, run_absorption=(i == SAND_SUBSTEPS - 1))
         rows, cols = sand_grid.shape
@@ -191,6 +224,20 @@ def main():
         region = frame[:rh, :rw]
         non_empty = (scaled[:rh, :rw, 0] != 0) | (scaled[:rh, :rw, 1] != 0) | (scaled[:rh, :rw, 2] != 0)
         region[non_empty] = scaled[:rh, :rw][non_empty]
+
+        # White wind particles within tornado column (vertical strip)
+        if disaster["type"] == "tornado" and disaster["frames_left"] > 0 and disaster.get("radius") is not None:
+            center_col = disaster["center_col"]
+            r = disaster["radius"]
+            c_min = max(0, center_col - r)
+            c_max = min(cols - 1, center_col + r)
+            n_pts = 22
+            if c_min <= c_max:
+                for _ in range(n_pts):
+                    gr = random.randint(0, rows - 1)
+                    gc = random.randint(c_min, c_max)
+                    px, py = gc * CELL + CELL // 2, gr * CELL + CELL // 2
+                    cv2.circle(frame, (px, py), 2, (255, 255, 255), -1)
 
         # Print to terminal every frame (useful for your game code / debugging)
         # Example: Left=(123,456) Right=(800,300)
@@ -203,6 +250,17 @@ def main():
                     (20, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, help_color, 2)
         cv2.putText(frame, "Tab: toggle sand/water",
                     (20, 85), cv2.FONT_HERSHEY_SIMPLEX, 0.6, help_color, 2)
+        cv2.putText(frame, "1: Tornado  2: Earthquake  3: Tsunami",
+                    (20, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.6, help_color, 2)
+
+        # Screen shake for tornado and earthquake
+        shake_x, shake_y = 0, 0
+        if disaster["frames_left"] > 0 and disaster["type"] in ("tornado", "earthquake"):
+            shake_x = random.randint(-3, 3)
+            shake_y = random.randint(-3, 3)
+        if shake_x != 0 or shake_y != 0:
+            M = np.float32([[1, 0, shake_x], [0, 1, shake_y]])
+            frame = cv2.warpAffine(frame, M, (w, h), borderMode=cv2.BORDER_REPLICATE)
 
         cv2.imshow("MediaPipe Hands - Index (bottom-left coords)", frame)
         key = cv2.waitKey(1) & 0xFF
@@ -210,6 +268,16 @@ def main():
             white_background = not white_background
         if key == 9:  # Tab
             drop_mode = "water" if drop_mode == "sand" else "sand"
+        if key == ord("1"):
+            disaster["type"] = "tornado"
+            disaster["frames_left"] = DISASTER_DURATION_FRAMES
+            disaster["center_col"] = random.randint(cols // 5, cols * 4 // 5) if sand_grid is not None else cols // 2
+        if key == ord("2"):
+            disaster["type"] = "earthquake"
+            disaster["frames_left"] = DISASTER_DURATION_FRAMES
+        if key == ord("3"):
+            disaster["type"] = "tsunami"
+            disaster["frames_left"] = DISASTER_DURATION_FRAMES
         if key in (ord("q"), ord("Q")):
             break
 
