@@ -11,6 +11,28 @@ from simulation import create_grid, step, place_sand, SAND, EMPTY
 CELL = 4
 SAND_COLOR_BGR = (74, 117, 180)  # tan/beige
 PINCH_THRESHOLD = 35
+NOT_PINCH_THRESHOLD = 50
+
+# MediaPipe Hands landmark indices (21 points)
+WRIST = 0
+THUMB_TIP = 4
+INDEX_TIP = 8
+MIDDLE_TIP = 12
+RING_TIP = 16
+PINKY_TIP = 20
+
+# A simple skeleton (connections) for the hand
+HAND_CONNECTIONS = [
+    # Palm
+    (0, 1), (1, 2), (2, 3), (3, 4),          # thumb
+    (0, 5), (5, 6), (6, 7), (7, 8),          # index
+    (0, 9), (9, 10), (10, 11), (11, 12),     # middle
+    (0, 13), (13, 14), (14, 15), (15, 16),   # ring
+    (0, 17), (17, 18), (18, 19), (19, 20),   # pinky
+
+    # Knuckle connections across the palm
+    (5, 9), (9, 13), (13, 17)
+]
 
 # -----------------------------
 # Helpers
@@ -38,29 +60,6 @@ def to_bottom_left_coords(norm_x: float, norm_y: float, w: int, h: int):
     y_top = int(norm_y * h)
     y_bottom = (h - 1) - y_top
     return x_px, y_bottom
-
-
-# MediaPipe Hands landmark indices (21 points)
-WRIST = 0
-THUMB_TIP = 4
-INDEX_TIP = 8
-MIDDLE_TIP = 12
-RING_TIP = 16
-PINKY_TIP = 20
-
-# A simple skeleton (connections) for the hand
-HAND_CONNECTIONS = [
-    # Palm
-    (0, 1), (1, 2), (2, 3), (3, 4),          # thumb
-    (0, 5), (5, 6), (6, 7), (7, 8),          # index
-    (0, 9), (9, 10), (10, 11), (11, 12),     # middle
-    (0, 13), (13, 14), (14, 15), (15, 16),   # ring
-    (0, 17), (17, 18), (18, 19), (19, 20),   # pinky
-
-    # Knuckle connections across the palm
-    (5, 9), (9, 13), (13, 17)
-]
-
 
 def main():
     # -----------------------------
@@ -99,6 +98,14 @@ def main():
 
     sand_grid = None  # created on first frame when we have h, w
     white_background = False
+
+    # -----------------------------
+    # Hand sign bool variables
+    sand_pinch = False
+    water_pinch = False
+    one_pinch = False
+    two_pinch = False
+    
 
     while True:
         ok, frame = cap.read()
@@ -150,15 +157,55 @@ def main():
                 x_cv = int(tip.x * w)
                 y_cv = int(tip.y * h)
                 cv2.circle(frame, (x_cv, y_cv), 8, (0, 255, 0), -1)
-
-                # Optional: pinch distance (thumb tip to index tip) in pixels
+                
                 pinch_px = dist(np.array(pts[THUMB_TIP]), np.array(pts[INDEX_TIP]))
 
-                # Spawn pixelated sand at fingertip when pinch < 35
-                if pinch_px < PINCH_THRESHOLD:
-                    grow, gcol = y_cv // CELL, x_cv // CELL
-                    for _ in range(3):
-                        place_sand(sand_grid, grow, gcol, radius=0)
+                # pinch distance (thumb tip to index tip) in pixels
+                d_index  = dist(np.array(pts[THUMB_TIP]), np.array(pts[INDEX_TIP]))
+                d_middle = dist(np.array(pts[THUMB_TIP]), np.array(pts[MIDDLE_TIP]))
+                d_ring   = dist(np.array(pts[THUMB_TIP]), np.array(pts[RING_TIP]))
+                d_pinky  = dist(np.array(pts[THUMB_TIP]), np.array(pts[PINKY_TIP]))
+
+                dists = {
+                    "sand": d_index,   # t+index
+                    "water": d_middle, # t+middle
+                    "one": d_ring,     # t+ring
+                    "two": d_pinky,    # t+pinky
+                }
+
+                # Find which finger is closest to the thumb
+                closest_name = min(dists, key=dists.get)
+                closest_dist = dists[closest_name]
+
+                # check for closest
+                others_far = all(
+                    d > NOT_PINCH_THRESHOLD
+                    for name, d in dists.items()
+                    if name != closest_name
+                )
+
+                gesture = None
+                if closest_dist < PINCH_THRESHOLD and others_far:
+                    gesture = closest_name  # "sand" / "water" / "one" / "two"
+
+                # Optional: draw/debug distances on screen
+                cv2.putText(frame, f"dI:{d_index:.0f} dM:{d_middle:.0f} dR:{d_ring:.0f} dP:{d_pinky:.0f}",
+                           (20, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,255,255), 2)
+
+                if (dist(np.array(pts[THUMB_TIP]), np.array(pts[WRIST])) > PINCH_THRESHOLD):
+                    if gesture == "sand":
+                        grow, gcol = y_cv // CELL, x_cv // CELL
+                        for ahhhh in range(3):
+                            place_sand(sand_grid, grow, gcol, radius=0)
+
+                    elif gesture == "water":
+                        print("Water pinch detected!")
+
+                    elif gesture == "one":
+                        print("One pinch detected!")
+
+                    elif gesture == "two":
+                        print("Two pinch detected!")
 
                 # Text near fingertip (shows bottom-left coords)
                 cv2.putText(
@@ -184,7 +231,7 @@ def main():
 
         # Print to terminal every frame (useful for your game code / debugging)
         # Example: Left=(123,456) Right=(800,300)
-        print(f"Left={idx_coords['Left']}  Right={idx_coords['Right']}")
+        #print(f"Left={idx_coords['Left']}  Right={idx_coords['Right']}")
 
         help_color = (0, 0, 0) if white_background else (255, 255, 255)
         cv2.putText(frame, "Index fingertip (x,y). Bottom-left is (0,0). Press Q to quit",
