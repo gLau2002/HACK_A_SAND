@@ -21,7 +21,7 @@ from simulation import (
 )
 
 # Sand overlay: cell size in pixels (pixelated look), BGR color
-CELL = 4
+CELL = 8  # was 4
 WET_SAND_COLOR_BGR = (34, 89, 122)  # tan/beige
 DRY_SAND_COLOR_BGR = (80, 187, 229)  # lighter tan
 WATER_COLOR_BGR = (246, 118, 86)
@@ -200,7 +200,7 @@ def main():
         if disaster["frames_left"] > 0:
             if disaster["type"] == "tornado":
                 rows_g, cols_g = sand_grid.shape
-                radius_base, intensity_base = 8, 5
+                radius_base, intensity_base = 4, 5
                 radius = max(4, radius_base + random.randint(-2, 2))
                 intensity = intensity_base * (0.7 + 0.6 * random.random())
                 disaster["center_col"] += random.randint(-2, 2)
@@ -212,7 +212,7 @@ def main():
             elif disaster["type"] == "earthquake":
                 apply_earthquake(sand_grid, intensity=0.15)
             elif disaster["type"] == "tsunami":
-                apply_tsunami(sand_grid, wave_height=28)
+                apply_tsunami(sand_grid, wave_height=14)
             disaster["frames_left"] -= 1
 
         for i in range(SAND_SUBSTEPS):
@@ -229,9 +229,10 @@ def main():
         if disaster["type"] == "tornado" and disaster["frames_left"] > 0 and disaster.get("radius") is not None:
             center_col = disaster["center_col"]
             r = disaster["radius"]
-            c_min = max(0, center_col - r)
-            c_max = min(cols - 1, center_col + r)
-            n_pts = 22
+            width = int(r * 2)  # wider to account for horizontal displacement
+            c_min = max(0, center_col - width)
+            c_max = min(cols - 1, center_col + width)
+            n_pts = 110
             if c_min <= c_max:
                 for _ in range(n_pts):
                     gr = random.randint(0, rows - 1)
