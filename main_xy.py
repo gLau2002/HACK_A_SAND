@@ -85,6 +85,18 @@ def to_bottom_left_coords(norm_x: float, norm_y: float, w: int, h: int):
     y_bottom = (h - 1) - y_top
     return x_px, y_bottom
 
+# -----------------------------
+# Menu UI (mouse + finger hover)
+# -----------------------------
+mouse_pos = (0, 0)
+mouse_clicked = False
+
+def _mouse_cb(event, x, y, flags, param):
+    global mouse_pos, mouse_clicked
+    mouse_pos = (x, y)
+    if event == cv2.EVENT_LBUTTONDOWN:
+        mouse_clicked = True
+
 def main():
     # -----------------------------
     # Webcam setup
@@ -119,6 +131,24 @@ def main():
     beach_bg_img = cv2.imread(str(beach_bg_path))
     if beach_bg_img is None:
         raise FileNotFoundError(f"Could not load background image: {beach_bg_path}")
+    
+    menu_bg_path = Path(__file__).parent / "assets" / "MenuBG.png"
+    menu_bg_img = cv2.imread(str(menu_bg_path))
+    if menu_bg_img is None:
+        raise FileNotFoundError(f"Could not load menu background image: {menu_bg_path}")
+
+    # State machine
+    STATE_MENU = 0
+    STATE_GAME = 1
+    state = STATE_MENU
+
+    # Debounce for play click (mouse or pinch)
+    play_latch = False
+
+    # Create window once so we can attach mouse callback
+    win_name = "MediaPipe Hands - Index (bottom-left coords)"
+    cv2.namedWindow(win_name)
+    cv2.setMouseCallback(win_name, _mouse_cb)
 
     sand_grid = None  # created on first frame when we have h, w
     white_background = False
@@ -143,6 +173,104 @@ def main():
 
         t_ms = int(time.time() * 1000)
         result = landmarker.detect_for_video(mp_image, t_ms)
+        
+        
+        # -----------------------------
+        # MENU STATE
+        # -----------------------------
+        if state == STATE_MENU:
+            # Start from the menu background
+            frame = cv2.resize(menu_bg_img, (w, h), interpolation=cv2.INTER_NEAREST).copy()
+
+            # Get an index-finger cursor (top-left coords, like OpenCV), if any hand exists
+            finger_cv = None
+            pinch_now = False
+
+            if result.hand_landmarks:
+                # Use the first detected hand for menu interaction
+                hand_lms = result.hand_landmarks[0]
+                pts = [(lm.x * w, lm.y * h) for lm in hand_lms]
+
+                tip = hand_lms[INDEX_TIP]
+                finger_cv = (int(tip.x * w), int(tip.y * h))
+
+                # Optional: pinch-to-click while hovering play
+                pinch_px = dist(np.array(pts[THUMB_TIP]), np.array(pts[INDEX_TIP]))
+                pinch_now = pinch_px < PINCH_THRESHOLD
+
+                # Draw finger cursor dot for clarity
+                cv2.circle(frame, finger_cv, 10, (0, 255, 0), -1)
+
+            # ---- Play button layout (under the title) ----
+            # Tune these if you want it higher/lower.
+            btn_w, btn_h = int(w * 0.22), int(h * 0.10)
+            btn_cx = w // 2
+            btn_cy = int(h * 0.38)  # roughly "below title"
+            base_rect = (
+                btn_cx - btn_w // 2,
+                btn_cy - btn_h // 2,
+                btn_cx + btn_w // 2,
+                btn_cy + btn_h // 2
+            )
+
+            # Hover sources: mouse OR finger
+            mx, my = mouse_pos
+            hover_mouse = (base_rect[0] <= mx <= base_rect[2]) and (base_rect[1] <= my <= base_rect[3])
+
+            hover_finger = False
+            if finger_cv is not None:
+                fx, fy = finger_cv
+                hover_finger = (base_rect[0] <= fx <= base_rect[2]) and (base_rect[1] <= fy <= base_rect[3])
+
+            hovered = hover_mouse or hover_finger
+
+            # Slight grow on hover (nice little animation)
+            scale = 1.06 if hovered else 1.00
+            hw = int((btn_w * scale) / 2)
+            hh = int((btn_h * scale) / 2)
+            rect = (btn_cx - hw, btn_cy - hh, btn_cx + hw, btn_cy + hh)
+
+            # Draw button (simple style)
+            # Border + filled rect
+            cv2.rectangle(frame, (rect[0], rect[1]), (rect[2], rect[3]), (20, 20, 20), thickness=-1)
+            cv2.rectangle(frame, (rect[0], rect[1]), (rect[2], rect[3]), (240, 240, 240), thickness=3)
+
+            # Button text
+            text = "PLAY"
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            font_scale = 1.2 * (w / 960.0)
+            thickness = 3
+            (tw, th), _ = cv2.getTextSize(text, font, font_scale, thickness)
+            tx = btn_cx - tw // 2
+            ty = btn_cy + th // 2
+            cv2.putText(frame, text, (tx, ty), font, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
+
+            # Click logic: mouse click OR pinch while hovering
+            clicked = False
+            if hovered and mouse_clicked:
+                clicked = True
+            if hovered and pinch_now and not play_latch:
+                clicked = True
+
+            # Latch pinch so it behaves like a click edge
+            play_latch = pinch_now
+
+            # Reset mouse click (one-shot)
+            mouse_clicked = False
+
+            if clicked:
+                state = STATE_GAME
+                # optional: reset sand when starting
+                # sand_grid = create_grid(h // CELL, w // CELL)
+
+            # Show menu and continue
+            cv2.imshow(win_name, frame)
+            key = cv2.waitKey(1) & 0xFF
+            if key in (ord("q"), ord("Q")):
+                break
+            continue
+        
+        #======================================================================================
 
         if white_background:
             frame = cv2.resize(beach_bg_img, (w, h), interpolation=cv2.INTER_NEAREST).copy()
@@ -234,7 +362,7 @@ def main():
                     if gesture == "sand":
                         grow, gcol = y_cv // CELL, x_cv // CELL
                         for ahhhh in range(3):
-                            place_sand(sand_grid, grow, gcol, radius=0)
+                            place_sand(sand_grid, grow, gcol, radius=2)
 
                     elif gesture == "water":
                         grow, gcol = y_cv // CELL, x_cv // CELL
@@ -325,7 +453,7 @@ def main():
             M = np.float32([[1, 0, shake_x], [0, 1, shake_y]])
             frame = cv2.warpAffine(frame, M, (w, h), borderMode=cv2.BORDER_REPLICATE)
 
-        cv2.imshow("MediaPipe Hands - Index (bottom-left coords)", frame)
+        cv2.imshow(win_name, frame)
         key = cv2.waitKey(1) & 0xFF
         if key == ord(" "):
             white_background = not white_background
