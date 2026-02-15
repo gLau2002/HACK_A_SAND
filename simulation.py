@@ -18,6 +18,9 @@ BFS_MAX_DEPTH = 10
 ABSORPTION_MAX_WATER_CELLS = 100
 WET_SAND_BATCH_SIZE = 10
 
+# Wet sand structure: 10% chance to fall diagonally when blocked below (retains shape better)
+WET_SAND_DIAGONAL_PROBABILITY = 0.02
+
 
 def create_grid(rows: int, cols: int) -> np.ndarray:
     """Create an empty 2D grid (rows x cols)."""
@@ -131,6 +134,9 @@ def step(grid: np.ndarray, run_absorption: bool = True) -> np.ndarray:
             if below == WATER:
                 next_grid[r, c] = WATER
                 next_grid[dr, c] = cell
+                continue
+            # Wet sand rarely falls diagonally — retains structure when blocked below
+            if cell == WET_SAND and random.random() >= WET_SAND_DIAGONAL_PROBABILITY:
                 continue
             left_first = random.random() < 0.5
             diag_order = [(dr, c - 1), (dr, c + 1)] if left_first else [(dr, c + 1), (dr, c - 1)]
