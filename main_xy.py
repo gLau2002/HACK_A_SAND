@@ -16,9 +16,13 @@ NOT_PINCH_THRESHOLD = 50
 # MediaPipe Hands landmark indices (21 points)
 WRIST = 0
 THUMB_TIP = 4
+INDEX_PIP = 6
 INDEX_TIP = 8
+MIDDLE_PIP = 10
 MIDDLE_TIP = 12
+RING_PIP = 14
 RING_TIP = 16
+PINKY_PIP = 18
 PINKY_TIP = 20
 
 # A simple skeleton (connections) for the hand
@@ -157,6 +161,26 @@ def main():
                 x_cv = int(tip.x * w)
                 y_cv = int(tip.y * h)
                 cv2.circle(frame, (x_cv, y_cv), 8, (0, 255, 0), -1)
+                
+                
+                # fist detection:
+                curl_margin = 10  # pixels; tune if needed
+
+                index_curled  = pts[INDEX_TIP][1]  > pts[INDEX_PIP][1]  + curl_margin
+                middle_curled = pts[MIDDLE_TIP][1] > pts[MIDDLE_PIP][1] + curl_margin
+                ring_curled   = pts[RING_TIP][1]   > pts[RING_PIP][1]   + curl_margin
+                pinky_curled  = pts[PINKY_TIP][1]  > pts[PINKY_PIP][1]  + curl_margin
+
+                is_fist = index_curled and middle_curled and ring_curled and pinky_curled
+
+                # Print only on the "rising edge" so it doesn't spam every frame
+                if "prev_fist" not in locals():
+                    prev_fist = {"Left": False, "Right": False, "Hand": False}
+
+                if is_fist and not prev_fist.get(label, False):
+                    print(f"{label} fist detected!")
+
+                prev_fist[label] = is_fist
                 
                 pinch_px = dist(np.array(pts[THUMB_TIP]), np.array(pts[INDEX_TIP]))
 
