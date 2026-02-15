@@ -140,7 +140,7 @@ def main():
 
     sand_grid = None  # created on first frame when we have h, w
     white_background = False
-    show_hand_wireframe = True
+    show_hand_wireframe = False
     drop_mode = "sand"
     disaster = {"type": None, "frames_left": 0, "center_col": 0}
     disaster_queue = []  # list of {"scheduled_at": float, "type": "tornado"|"earthquake"|"tsunami"}
@@ -390,8 +390,8 @@ def main():
                 if 0 <= x1 < w and 0 <= y1 < h:
                     color = tuple(int(x) for x in COLORS_BGR[cell_type])
                     cv2.rectangle(frame, (x1, y1), (min(x2, w), min(y2, h)), color, -1)
-        if current_mode is not None:
-            cv2.putText(frame, current_mode.upper(), (20, 85), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+        # if current_mode is not None:
+        cv2.putText(frame, "Mode: " + ("NONE" if current_mode is None else current_mode.upper()), (20, 85), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
 
         # White wind particles within tornado column (vertical strip)
         if disaster["type"] == "tornado" and disaster["frames_left"] > 0 and disaster.get("radius") is not None:
@@ -426,14 +426,14 @@ def main():
             cv2.putText(frame, warning_text, (x, y), font, font_scale, (0, 255, 255), thickness)
 
         help_color = (0, 0, 0) if white_background else (255, 255, 255)
-        cv2.putText(frame, "Index fingertip (x,y). Bottom-left is (0,0). Press Q to quit",
+        cv2.putText(frame, "Press Q to quit",
                     (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.6, help_color, 2)
         # cv2.putText(frame, "Space: toggle beach background",
         #             (20, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, help_color, 2)
         # cv2.putText(frame, "H: toggle hand wireframe",
         #             (20, 85), cv2.FONT_HERSHEY_SIMPLEX, 0.6, help_color, 2)
         cv2.putText(frame, "1/2/3: Queue Tornado / Earthquake / Tsunami (5s warning)",
-                    (20, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.6, help_color, 2)
+                    (20, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, help_color, 2)
 
         # Screen shake for tornado and earthquake
         shake_x, shake_y = 0, 0
