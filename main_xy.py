@@ -12,6 +12,8 @@ from simulation import (
     place_sand,
     place_water,
     erase_region,
+    grab_region,
+    place_blob,
     apply_tornado,
     apply_earthquake,
     apply_tsunami,
@@ -28,7 +30,7 @@ DRY_SAND_COLOR_BGR = (80, 187, 229)  # lighter tan
 WATER_COLOR_BGR = (246, 118, 86)
 # Lookup for vectorized draw: index = cell type (EMPTY=0, SAND=1, WATER=2, WET_SAND=3)
 COLORS_BGR = np.array([(0, 0, 0), DRY_SAND_COLOR_BGR, WATER_COLOR_BGR, WET_SAND_COLOR_BGR], dtype=np.uint8)
-PINCH_THRESHOLD = 35
+PINCH_THRESHOLD = 40
 NOT_PINCH_THRESHOLD = 50
 
 # MediaPipe Hands landmark indices (21 points)
@@ -57,6 +59,7 @@ HAND_CONNECTIONS = [
 ]
 SAND_SUBSTEPS = 3
 PLACE_RADIUS = 2
+GRAB_RADIUS = 5
 DISASTER_DURATION_FRAMES = 60
 WAVE_INTERVAL = 10
 
@@ -126,6 +129,9 @@ def main():
     white_background = False
     drop_mode = "sand"
     disaster = {"type": None, "frames_left": 0, "center_col": 0}
+    grabbed_blob = None  # {"cells": [(dr, dc, cell_type), ...]} when dragging
+    last_drag_center = (0, 0)  # grid coords for place on release
+    prev_gesture = None  # to detect grab transition for re-pinch replace
 
     while True:
         ok, frame = cap.read()
@@ -151,6 +157,9 @@ def main():
 
         # We'll store index fingertip coords for each hand (bottom-left origin)
         idx_coords = {"Left": None, "Right": None}
+        current_mode = None  # "drag", "grab", "sand", "water", "erase"
+        current_tip_px = None
+        current_tip_grid = None  # (row, col) for overlay drawing
 
         if result.hand_landmarks:
             for i, hand_lms in enumerate(result.hand_landmarks):
@@ -209,11 +218,12 @@ def main():
                 d_ring   = dist(np.array(pts[THUMB_TIP]), np.array(pts[RING_TIP]))
                 d_pinky  = dist(np.array(pts[THUMB_TIP]), np.array(pts[PINKY_TIP]))
 
+                # Gesture remap: index=grab/drag, middle=sand, ring=water, pinky=no-op
                 dists = {
-                    "sand": d_index,   # t+index
-                    "water": d_middle, # t+middle
-                    "one": d_ring,     # t+ring
-                    "two": d_pinky,    # t+pinky
+                    "grab": d_index,   # thumb+index
+                    "sand": d_middle,  # thumb+middle
+                    "water": d_ring,   # thumb+ring
+                    "pinky": d_pinky,  # thumb+pinky (reserved/no-op)
                 }
 
                 # Find which finger is closest to the thumb
@@ -229,28 +239,43 @@ def main():
 
                 gesture = None
                 if closest_dist < PINCH_THRESHOLD and others_far:
-                    gesture = closest_name  # "sand" / "water" / "one" / "two"
+                    gesture = closest_name  # "grab" / "sand" / "water" / "pinky"
 
                 # Optional: draw/debug distances on screen
-                cv2.putText(frame, f"dI:{d_index:.0f} dM:{d_middle:.0f} dR:{d_ring:.0f} dP:{d_pinky:.0f}",
-                           (20, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,255,255), 2)
+                # cv2.putText(frame, f"dI:{d_index:.0f} dM:{d_middle:.0f} dR:{d_ring:.0f} dP:{d_pinky:.0f}",
+                #            (20, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,255,255), 2)
 
                 if (dist(np.array(pts[THUMB_TIP]), np.array(pts[WRIST])) > PINCH_THRESHOLD):
-                    if gesture == "sand":
+                    if gesture == "grab":
                         grow, gcol = y_cv // CELL, x_cv // CELL
-                        for ahhhh in range(3):
-                            place_sand(sand_grid, grow, gcol, radius=2)
-
+                        if prev_gesture != "grab":
+                            blob = grab_region(sand_grid, grow, gcol, GRAB_RADIUS)
+                            if blob is not None:
+                                grabbed_blob = blob
+                        last_drag_center = (grow, gcol)
+                    elif gesture == "sand":
+                        grow, gcol = y_cv // CELL, x_cv // CELL
+                        for _ in range(3):
+                            place_sand(sand_grid, grow, gcol, radius=PLACE_RADIUS)
                     elif gesture == "water":
                         grow, gcol = y_cv // CELL, x_cv // CELL
                         for _ in range(3):
-                                place_water(sand_grid, grow, gcol, radius=PLACE_RADIUS)
+                            place_water(sand_grid, grow, gcol, radius=PLACE_RADIUS)
+                    elif gesture == "pinky":
+                        pass  # reserved / no-op
 
-                    elif gesture == "one":
-                        print("One pinch detected!")
+                if gesture != "grab":
+                    if grabbed_blob is not None:
+                        place_blob(sand_grid, grabbed_blob, last_drag_center[0], last_drag_center[1])
+                        grabbed_blob = None
 
-                    elif gesture == "two":
-                        print("Two pinch detected!")
+                # Open hand (no pinch, index extended): reserved for future use
+                if is_fist or gesture is not None:
+                    pass
+                elif not index_curled:
+                    pass  # open hand, index extended — reserved
+                else:
+                    pass
 
                 # Text near fingertip (shows bottom-left coords)
                 cv2.putText(
@@ -262,6 +287,23 @@ def main():
                     (0, 255, 0),
                     2
                 )
+                prev_gesture = gesture
+                if is_fist:
+                    current_mode = "erase"
+                elif gesture == "grab":
+                    current_mode = "drag" if grabbed_blob else "grab"
+                elif gesture == "sand":
+                    current_mode = "sand"
+                elif gesture == "water":
+                    current_mode = "water"
+                # open hand (not index_curled, no pinch) — no mode set, reserved for future
+                current_tip_px = (x_cv, y_cv)
+                current_tip_grid = (y_cv // CELL, x_cv // CELL)
+        else:
+            prev_gesture = None
+            if grabbed_blob is not None:
+                place_blob(sand_grid, grabbed_blob, last_drag_center[0], last_drag_center[1])
+                grabbed_blob = None
 
         # Apply disaster effect (if active) then advance sand physics
         if disaster["frames_left"] > 0:
@@ -299,6 +341,19 @@ def main():
         non_empty = (scaled[:rh, :rw, 0] != 0) | (scaled[:rh, :rw, 1] != 0) | (scaled[:rh, :rw, 2] != 0)
         region[non_empty] = scaled[:rh, :rw][non_empty]
 
+        # Visual feedback: drag preview (grabbed blob follows pointer), mode indicator
+        if current_mode == "drag" and grabbed_blob is not None and current_tip_grid is not None:
+            gr0, gc0 = current_tip_grid
+            for dr, dc, cell_type in grabbed_blob["cells"]:
+                r, c = gr0 + dr, gc0 + dc
+                x1, y1 = c * CELL, r * CELL
+                x2, y2 = (c + 1) * CELL, (r + 1) * CELL
+                if 0 <= x1 < w and 0 <= y1 < h:
+                    color = tuple(int(x) for x in COLORS_BGR[cell_type])
+                    cv2.rectangle(frame, (x1, y1), (min(x2, w), min(y2, h)), color, -1)
+        if current_mode is not None:
+            cv2.putText(frame, current_mode.upper(), (20, 85), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+
         # White wind particles within tornado column (vertical strip)
         if disaster["type"] == "tornado" and disaster["frames_left"] > 0 and disaster.get("radius") is not None:
             center_col = disaster["center_col"]
@@ -323,8 +378,6 @@ def main():
                     (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.6, help_color, 2)
         cv2.putText(frame, "Space: toggle beach background",
                     (20, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, help_color, 2)
-        cv2.putText(frame, "Tab: toggle sand/water",
-                    (20, 85), cv2.FONT_HERSHEY_SIMPLEX, 0.6, help_color, 2)
         cv2.putText(frame, "1: Tornado  2: Earthquake  3: Tsunami",
                     (20, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.6, help_color, 2)
 

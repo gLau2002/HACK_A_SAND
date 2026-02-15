@@ -108,23 +108,29 @@ def _convert_dry_sand_patch(grid: np.ndarray, seed_r: int, seed_c: int, max_cell
                 stack.append((nr, nc))
 
 
-def step(grid: np.ndarray, run_absorption: bool = True) -> np.ndarray:
+def step(grid: np.ndarray, run_absorption: bool = True, frozen_cells: set | None = None) -> np.ndarray:
     """
     Advance the simulation one step. Sand falls down; if blocked, tries down-left or down-right.
     If run_absorption is True, also run the water-absorption pass (call with True once per frame).
-    Returns a new grid (double-buffer).
+    frozen_cells: optional set of (row, col) to exclude from physics (e.g. grabbed blob); they are
+    not updated and block movement into them. Returns a new grid (double-buffer).
     """
     rows, cols = grid.shape
     next_grid = grid.copy()
+    frozen = frozen_cells if frozen_cells is not None else set()
 
     # Pass 1: sand and wet sand fall — move into EMPTY or swap with WATER (displacement)
     for r in range(rows - 1, -1, -1):
         for c in range(cols):
+            if (r, c) in frozen:
+                continue
             cell = next_grid[r, c]
             if cell not in (SAND, WET_SAND):
                 continue
             dr = r + 1
             if dr >= rows:
+                continue
+            if (dr, c) in frozen:
                 continue
             below = next_grid[dr, c]
             if below == EMPTY:
@@ -141,7 +147,7 @@ def step(grid: np.ndarray, run_absorption: bool = True) -> np.ndarray:
             left_first = random.random() < 0.5
             diag_order = [(dr, c - 1), (dr, c + 1)] if left_first else [(dr, c + 1), (dr, c - 1)]
             for nr, nc in diag_order:
-                if nc < 0 or nc >= cols:
+                if nc < 0 or nc >= cols or (nr, nc) in frozen:
                     continue
                 nb = next_grid[nr, nc]
                 if nb == EMPTY:
@@ -156,10 +162,14 @@ def step(grid: np.ndarray, run_absorption: bool = True) -> np.ndarray:
     # Pass 2: water — fall (down, then diagonals), then spread horizontally
     for r in range(rows - 1, -1, -1):
         for c in range(cols):
+            if (r, c) in frozen:
+                continue
             if next_grid[r, c] != WATER:
                 continue
             dr = r + 1
             if dr >= rows:
+                continue
+            if (dr, c) in frozen:
                 continue
             if next_grid[dr, c] == EMPTY:
                 next_grid[r, c] = EMPTY
@@ -168,7 +178,7 @@ def step(grid: np.ndarray, run_absorption: bool = True) -> np.ndarray:
             left_first = random.random() < 0.5
             diag_order = [(dr, c - 1), (dr, c + 1)] if left_first else [(dr, c + 1), (dr, c - 1)]
             for nr, nc in diag_order:
-                if nc < 0 or nc >= cols:
+                if nc < 0 or nc >= cols or (nr, nc) in frozen:
                     continue
                 if next_grid[nr, nc] == EMPTY:
                     next_grid[r, c] = EMPTY
@@ -181,12 +191,12 @@ def step(grid: np.ndarray, run_absorption: bool = True) -> np.ndarray:
         water_idx = water_idx[np.random.permutation(water_idx.shape[0])]
         for i in range(water_idx.shape[0]):
             r, c = int(water_idx[i, 0]), int(water_idx[i, 1])
-            if next_grid[r, c] != WATER:
+            if (r, c) in frozen or next_grid[r, c] != WATER:
                 continue
             left_first = random.random() < 0.5
             sides = [(r, c - 1), (r, c + 1)] if left_first else [(r, c + 1), (r, c - 1)]
             for nr, nc in sides:
-                if nc < 0 or nc >= cols:
+                if nc < 0 or nc >= cols or (nr, nc) in frozen:
                     continue
                 if next_grid[nr, nc] == EMPTY:
                     next_grid[r, c] = EMPTY
@@ -201,11 +211,11 @@ def step(grid: np.ndarray, run_absorption: bool = True) -> np.ndarray:
             water_idx = water_idx[perm[:ABSORPTION_MAX_WATER_CELLS]]
             for i in range(water_idx.shape[0]):
                 r, c = int(water_idx[i, 0]), int(water_idx[i, 1])
-                if next_grid[r, c] != WATER:
+                if (r, c) in frozen or next_grid[r, c] != WATER:
                     continue
                 dry = None
                 for nr, nc in _neighbors4(next_grid, r, c):
-                    if next_grid[nr, nc] == SAND:
+                    if (nr, nc) not in frozen and next_grid[nr, nc] == SAND:
                         dry = (nr, nc)
                         break
                 if dry is not None:
@@ -270,6 +280,145 @@ def place_water(grid: np.ndarray, row: int, col: int, radius: int = 0) -> None:
                 r, c = row + dr, col + dc
                 if 0 <= r < rows and 0 <= c < cols:
                     grid[r, c] = WATER
+
+
+def push_region(
+    grid: np.ndarray,
+    center_row: int,
+    center_col: int,
+    dx: int,
+    dy: int,
+    radius: int,
+    strength: float = 1.0,
+) -> None:
+    """
+    Push non-EMPTY cells in a circular region around (center_row, center_col)
+    in the direction (dx, dy). dx = delta column, dy = delta row (grid coords).
+    Process cells from the side opposite the push direction to avoid overwriting.
+    Modifies grid in place.
+    """
+    rows, cols = grid.shape
+    if dx == 0 and dy == 0:
+        return
+    # Normalize direction for ordering; use magnitude for displacement
+    mag = math.sqrt(dx * dx + dy * dy)
+    if mag <= 0:
+        return
+    r2 = radius * radius
+    moves = []  # (r, c, nr, nc, cell_type)
+    for dr in range(-radius, radius + 1):
+        for dc in range(-radius, radius + 1):
+            if dr * dr + dc * dc > r2:
+                continue
+            r, c = center_row + dr, center_col + dc
+            if r < 0 or r >= rows or c < 0 or c >= cols or grid[r, c] == EMPTY:
+                continue
+            dist_from_center = math.sqrt(dr * dr + dc * dc)
+            falloff = max(0.0, 1.0 - dist_from_center / max(radius, 1))
+            nr = r + round(dy * strength * falloff)
+            nc = c + round(dx * strength * falloff)
+            if nr == r and nc == c:
+                continue
+            if 0 <= nr < rows and 0 <= nc < cols:
+                # Dot product (dr, dc) . (dx, dy): back of push = negative dot
+                moves.append((r, c, nr, nc, int(grid[r, c]), dr * dx + dc * dy))
+    # Sort by dot product ascending so we process "back" of push first
+    moves.sort(key=lambda m: m[5])
+    for r, c, nr, nc, _, _ in moves:
+        grid[r, c], grid[nr, nc] = grid[nr, nc], grid[r, c]
+
+
+def sample_region(
+    grid: np.ndarray, center_row: int, center_col: int, radius: int
+) -> dict | None:
+    """
+    Sample a circular region around (center_row, center_col); return particle
+    data as relative offsets (dr, dc, cell_type). Does not modify the grid.
+    Returns {"cells": [(dr, dc, cell_type), ...]} or None if region was all EMPTY.
+    """
+    rows, cols = grid.shape
+    r2 = radius * radius
+    cells = []
+    for dr in range(-radius, radius + 1):
+        for dc in range(-radius, radius + 1):
+            if dr * dr + dc * dc > r2:
+                continue
+            r, c = center_row + dr, center_col + dc
+            if 0 <= r < rows and 0 <= c < cols and grid[r, c] != EMPTY:
+                cells.append((dr, dc, int(grid[r, c])))
+    if not cells:
+        return None
+    return {"cells": cells}
+
+
+def move_blob_in_grid(
+    grid: np.ndarray,
+    blob_data: dict,
+    old_center_row: int,
+    old_center_col: int,
+    new_center_row: int,
+    new_center_col: int,
+) -> None:
+    """
+    Move the blob in the grid from old_center to new_center by swapping each
+    blob cell with the cell at its target. Displaced material ends up at the
+    old blob positions. Modifies grid in place.
+    """
+    rows, cols = grid.shape
+    swaps = []
+    for dr, dc, _ in blob_data["cells"]:
+        old_r = old_center_row + dr
+        old_c = old_center_col + dc
+        new_r = new_center_row + dr
+        new_c = new_center_col + dc
+        if 0 <= old_r < rows and 0 <= old_c < cols and 0 <= new_r < rows and 0 <= new_c < cols:
+            swaps.append((old_r, old_c, new_r, new_c, int(grid[old_r, old_c]), int(grid[new_r, new_c])))
+    for old_r, old_c, new_r, new_c, val_old, val_new in swaps:
+        grid[new_r, new_c] = val_old
+        grid[old_r, old_c] = val_new
+
+
+def grab_region(
+    grid: np.ndarray, center_row: int, center_col: int, radius: int
+) -> dict | None:
+    """
+    Sample a circular region around (center_row, center_col), store particle
+    data as relative offsets (dr, dc, cell_type), clear the source region.
+    Returns {"cells": [(dr, dc, cell_type), ...]} or None if region was all EMPTY.
+    Modifies grid in place.
+    """
+    rows, cols = grid.shape
+    r2 = radius * radius
+    cells = []
+    for dr in range(-radius, radius + 1):
+        for dc in range(-radius, radius + 1):
+            if dr * dr + dc * dc > r2:
+                continue
+            r, c = center_row + dr, center_col + dc
+            if 0 <= r < rows and 0 <= c < cols and grid[r, c] != EMPTY:
+                cells.append((dr, dc, int(grid[r, c])))
+                grid[r, c] = EMPTY
+    if not cells:
+        return None
+    return {"cells": cells}
+
+
+def place_blob(
+    grid: np.ndarray,
+    blob_data: dict,
+    new_center_row: int,
+    new_center_col: int,
+) -> None:
+    """
+    Paste blob at (new_center_row, new_center_col). blob_data["cells"] is
+    [(dr, dc, cell_type), ...]. Overwrites existing cells. Modifies grid in place.
+    """
+    rows, cols = grid.shape
+    for dr, dc, cell_type in blob_data["cells"]:
+        r = new_center_row + dr
+        c = new_center_col + dc
+        if 0 <= r < rows and 0 <= c < cols:
+            grid[r, c] = cell_type
 
 
 def erase_region(
