@@ -21,6 +21,9 @@ WET_SAND_BATCH_SIZE = 10
 # Wet sand structure: 10% chance to fall diagonally when blocked below (retains shape better)
 WET_SAND_DIAGONAL_PROBABILITY = 0.02
 
+# Tsunami: max cells a single evicted particle can be pushed inward (avoids side-switching)
+TSUNAMI_MAX_DISPLACE = 10
+
 
 def create_grid(rows: int, cols: int) -> np.ndarray:
     """Create an empty 2D grid (rows x cols)."""
@@ -528,16 +531,29 @@ def apply_tsunami(
             if grid[r, c] == WATER:
                 continue
             if grid[r, c] in (SAND, WET_SAND):
+                saved = grid[r, c]
+                grid[r, c] = WATER
                 if side == "left":
-                    # Shift row rightward: free (r,c) by pushing content right
-                    saved = grid[r, c]
-                    for c2 in range(c, cols - 1):
-                        grid[r, c2] = grid[r, c2 + 1]
-                    grid[r, cols - 1] = saved
+                    # Cascade evicted particle right until EMPTY or max displacement
+                    end_col = min(cols, c + 1 + TSUNAMI_MAX_DISPLACE)
+                    for c2 in range(c + 1, end_col):
+                        if grid[r, c2] == EMPTY:
+                            grid[r, c2] = saved
+                            saved = EMPTY
+                            break
+                        grid[r, c2], saved = saved, grid[r, c2]
+                    if saved != EMPTY:
+                        grid[r, end_col - 1] = saved
                 else:
-                    # Shift row leftward: free (r,c) by pushing content left
-                    saved = grid[r, c]
-                    for c2 in range(c, 0, -1):
-                        grid[r, c2] = grid[r, c2 - 1]
-                    grid[r, 0] = saved
-            grid[r, c] = WATER
+                    # Cascade evicted particle left until EMPTY or max displacement
+                    end_col = max(-1, c - 1 - TSUNAMI_MAX_DISPLACE)
+                    for c2 in range(c - 1, end_col, -1):
+                        if grid[r, c2] == EMPTY:
+                            grid[r, c2] = saved
+                            saved = EMPTY
+                            break
+                        grid[r, c2], saved = saved, grid[r, c2]
+                    if saved != EMPTY:
+                        grid[r, end_col + 1] = saved
+            else:
+                grid[r, c] = WATER

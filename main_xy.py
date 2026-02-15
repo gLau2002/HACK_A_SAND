@@ -262,7 +262,7 @@ def main():
                         for _ in range(3):
                             place_water(sand_grid, grow, gcol, radius=PLACE_RADIUS)
                     elif gesture == "pinky":
-                        pass  # reserved / no-op
+                        pass  # reserved for later use
 
                 if gesture != "grab":
                     if grabbed_blob is not None:
@@ -309,25 +309,30 @@ def main():
         if disaster["frames_left"] > 0:
             if disaster["type"] == "tornado":
                 rows_g, cols_g = sand_grid.shape
-                radius_base, intensity_base = 4, 5
-                radius = max(4, radius_base + random.randint(-2, 2))
+                radius_base, intensity_base = 5, 5
+                radius = max(2, radius_base + random.randint(-2, 2))
+                disaster["radius"] = radius
+
                 intensity = intensity_base * (0.7 + 0.6 * random.random())
-                disaster["center_col"] += random.randint(-2, 2)
+                disaster["center_col"] += random.randint(-4, 4)
                 disaster["center_col"] = max(
                     radius, min(cols_g - 1 - radius, disaster["center_col"])
                 )
-                disaster["radius"] = radius
                 apply_tornado(sand_grid, disaster["center_col"], radius=radius, intensity=intensity)
             elif disaster["type"] == "earthquake":
-                apply_earthquake(sand_grid, intensity=0.15)
+                intensity_base = 0.25
+                intensity = intensity_base * (0.7 + 0.6 * random.random())
+                apply_earthquake(sand_grid, intensity=intensity)
             elif disaster["type"] == "tsunami":
                 frames_elapsed = DISASTER_DURATION_FRAMES - disaster["frames_left"]
                 if frames_elapsed % WAVE_INTERVAL == 0:
+                    height_base = 8
+                    height = height_base * (0.7 + 0.6 * random.random())
                     apply_tsunami(
                         sand_grid,
                         side=disaster["tsunami_side"],
-                        wave_height=14,
-                        wave_width=2,
+                        wave_height=height,
+                        wave_width=3,
                     )
             disaster["frames_left"] -= 1
 
