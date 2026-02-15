@@ -266,6 +266,22 @@ def place_water(grid: np.ndarray, row: int, col: int, radius: int = 0) -> None:
                     grid[r, c] = WATER
 
 
+def erase_region(
+    grid: np.ndarray,
+    row_min: int,
+    row_max: int,
+    col_min: int,
+    col_max: int,
+) -> None:
+    """Set all cells in the given rectangle (inclusive) to EMPTY. Clamps to grid bounds. Modifies grid in place."""
+    rows, cols = grid.shape
+    r0 = max(0, min(row_min, row_max))
+    r1 = min(rows - 1, max(row_min, row_max))
+    c0 = max(0, min(col_min, col_max))
+    c1 = min(cols - 1, max(col_min, col_max))
+    grid[r0 : r1 + 1, c0 : c1 + 1] = EMPTY
+
+
 def clear_grid(grid: np.ndarray) -> None:
     """Set all cells to empty. Modifies grid in place."""
     grid.fill(EMPTY)
@@ -323,17 +339,50 @@ def apply_earthquake(grid: np.ndarray, intensity: float = 0.15) -> None:
         grid[r, c], grid[nr, nc] = grid[nr, nc], grid[r, c]
 
 
-def apply_tsunami(grid: np.ndarray, wave_height: int = 8) -> None:
+def apply_tsunami(
+    grid: np.ndarray,
+    side: str,
+    wave_height: int = 8,
+    wave_width: int = 2,
+) -> None:
     """
-    Spawn WATER in a wave-shaped band from the bottom edge. Wave is taller in middle, thinner at edges.
-    Modifies grid in place.
+    Spawn a hump of WATER from the chosen side (left or right). Vertical hump profile:
+    more water in middle rows, less at top/bottom. Displaces SAND/WET_SAND inward
+    when placing water. Modifies grid in place.
     """
     rows, cols = grid.shape
-    for c in range(cols):
-        t = (c - cols / 2) / (cols / 2) if cols > 0 else 0
-        profile = max(0, 1 - t * t)
-        depth = max(1, int(wave_height * profile))
-        for i in range(depth):
-            r = rows - 1 - i
-            if r >= 0 and grid[r, c] == EMPTY:
-                grid[r, c] = WATER
+    if cols < wave_width or rows < 2:
+        return
+    mid = (rows - 1) / 2.0
+    half_range = rows / 2.0
+    # Vertical hump: profile[r] = 1 at center, 0 at top/bottom
+    profile = np.zeros(rows)
+    for r in range(rows):
+        t = (r - mid) / half_range if half_range > 0 else 0
+        profile[r] = max(0.0, 1.0 - t * t)
+
+    if side == "left":
+        col_range = range(0, wave_width)
+    else:
+        col_range = range(cols - 1, cols - wave_width - 1, -1)
+
+    for r in range(rows):
+        if profile[r] <= 0:
+            continue
+        for c in col_range:
+            if grid[r, c] == WATER:
+                continue
+            if grid[r, c] in (SAND, WET_SAND):
+                if side == "left":
+                    # Shift row rightward: free (r,c) by pushing content right
+                    saved = grid[r, c]
+                    for c2 in range(c, cols - 1):
+                        grid[r, c2] = grid[r, c2 + 1]
+                    grid[r, cols - 1] = saved
+                else:
+                    # Shift row leftward: free (r,c) by pushing content left
+                    saved = grid[r, c]
+                    for c2 in range(c, 0, -1):
+                        grid[r, c2] = grid[r, c2 - 1]
+                    grid[r, 0] = saved
+            grid[r, c] = WATER

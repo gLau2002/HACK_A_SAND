@@ -11,6 +11,7 @@ from simulation import (
     step,
     place_sand,
     place_water,
+    erase_region,
     apply_tornado,
     apply_earthquake,
     apply_tsunami,
@@ -57,6 +58,7 @@ HAND_CONNECTIONS = [
 SAND_SUBSTEPS = 3
 PLACE_RADIUS = 2
 DISASTER_DURATION_FRAMES = 60
+WAVE_INTERVAL = 10
 
 # -----------------------------
 # Helpers
@@ -108,7 +110,7 @@ def main():
     options = vision.HandLandmarkerOptions(
         base_options=python.BaseOptions(model_asset_path=model_path),
         running_mode=vision.RunningMode.VIDEO,
-        num_hands=2,
+        num_hands=1,
         min_hand_detection_confidence=0.5,
         min_hand_presence_confidence=0.5,
         min_tracking_confidence=0.5,
@@ -187,15 +189,18 @@ def main():
 
                 is_fist = index_curled and middle_curled and ring_curled and pinky_curled
 
-                # Print only on the "rising edge" so it doesn't spam every frame
-                if "prev_fist" not in locals():
-                    prev_fist = {"Left": False, "Right": False, "Hand": False}
+                if is_fist:
+                    x_min = min(p[0] for p in pts)
+                    x_max = max(p[0] for p in pts)
+                    y_min = min(p[1] for p in pts)
+                    y_max = max(p[1] for p in pts)
+                    rows_g, cols_g = sand_grid.shape
+                    row_min = max(0, int(y_min // CELL))
+                    row_max = min(rows_g - 1, int(y_max // CELL))
+                    col_min = max(0, int(x_min // CELL))
+                    col_max = min(cols_g - 1, int(x_max // CELL))
+                    erase_region(sand_grid, row_min, row_max, col_min, col_max)
 
-                if is_fist and not prev_fist.get(label, False):
-                    print(f"{label} fist detected!") #ERASER HERE
-
-                prev_fist[label] = is_fist
-                
                 pinch_px = dist(np.array(pts[THUMB_TIP]), np.array(pts[INDEX_TIP]))
 
                 # pinch distance (thumb tip to index tip) in pixels
@@ -234,7 +239,7 @@ def main():
                     if gesture == "sand":
                         grow, gcol = y_cv // CELL, x_cv // CELL
                         for ahhhh in range(3):
-                            place_sand(sand_grid, grow, gcol, radius=0)
+                            place_sand(sand_grid, grow, gcol, radius=2)
 
                     elif gesture == "water":
                         grow, gcol = y_cv // CELL, x_cv // CELL
@@ -274,7 +279,14 @@ def main():
             elif disaster["type"] == "earthquake":
                 apply_earthquake(sand_grid, intensity=0.15)
             elif disaster["type"] == "tsunami":
-                apply_tsunami(sand_grid, wave_height=14)
+                frames_elapsed = DISASTER_DURATION_FRAMES - disaster["frames_left"]
+                if frames_elapsed % WAVE_INTERVAL == 0:
+                    apply_tsunami(
+                        sand_grid,
+                        side=disaster["tsunami_side"],
+                        wave_height=14,
+                        wave_width=2,
+                    )
             disaster["frames_left"] -= 1
 
         for i in range(SAND_SUBSTEPS):
@@ -341,6 +353,7 @@ def main():
         if key == ord("3"):
             disaster["type"] = "tsunami"
             disaster["frames_left"] = DISASTER_DURATION_FRAMES
+            disaster["tsunami_side"] = random.choice(["left", "right"])
         if key in (ord("q"), ord("Q")):
             break
 
