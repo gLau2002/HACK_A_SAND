@@ -67,13 +67,13 @@ Rendering: EMPTY = black; SAND / WATER / WET_SAND use BGR colors (CELL size 8 px
 
 ## 3. Disaster types
 
-All three are in `simulation.py`, triggered from `main_xy.py`: auto-queued every 30–45 s, or manually with **1** / **2** / **3**. A 5 s warning is shown, then the effect runs for 60 frames.
+Disaster strikes every 30–45 s, or manually with **1** / **2** / **3**. A 5 s warning is shown, then the effect runs for 60 frames.
 
 | Disaster    | Behavior |
 | ----------- | -------- |
-| **Tornado** | Vortex around bottom-center. Non-empty cells in a circular region are rotated and lifted; horizontal fling 1.5×. Center drifts randomly; radius and intensity vary per frame. White particle overlay in the column. |
-| **Earthquake** | With probability ~0.25 (scaled), each non-empty cell swaps with a random 4-neighbor. Global shuffle. Screen shake in the app. |
-| **Tsunami** | From left or right (chosen at start). Every 10 frames, a wave of WATER is added at the edge (hump profile: more in middle rows). Existing SAND/WET_SAND is displaced inward (cascade until EMPTY or max displacement 10 cells). |
+| **Tornado** | Vortex around bottom-center. Non-empty cells in a circular region are rotated and lifted; horizontal fling 1.5×. Center drifts randomly; radius and intensity vary per frame. |
+| **Earthquake** | Each non-empty cell swaps with a random 4-neighbor. Global shuffle. Screen shake in the app. |
+| **Tsunami** | From left or right randomly. Existing SAND/WET_SAND is displaced inward. |
 
 ---
 
@@ -84,5 +84,6 @@ All three are in `simulation.py`, triggered from `main_xy.py`: auto-queued every
 - **MediaPipe**: hand landmark detection (21 points); gesture recognition (pinch, fist, fingertip position)
 - **NumPy**: grid representation and array ops for simulation and rendering
 - **Matplotlib**: in `requirements.txt` (used by `sandTest.py` or tooling; not used in the main app loop)
+- **Cursor**: Agentic code development and debugging.
 
 **Assets:** `assets/BeachBG.png` — background when not toggled to camera view.
